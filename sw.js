@@ -21,18 +21,24 @@ async function trim(c){   // 최근 것부터 세어, 장수나 합계 용량을
     if(keys.length-i>MAX_IMAGES||bytes>MAX_IMAGE_BYTES)await c.delete(keys[i]);
   }
 }
+// 저장은 되면 하고, 공간 부족 같은 실패는 넘긴다. 받은 응답은 저장 실패와 상관없이 그대로 돌려준다
+async function keep(name,req,r,limit){try{const c=await caches.open(name);await c.put(req,r);if(limit)await trim(c);}catch(_){}}
+async function kept(name,req){try{return await (await caches.open(name)).match(req,{ignoreSearch:true});}catch(_){return undefined;}}
 async function firstKept(req,name,limit){
-  const c=await caches.open(name);const kept=await c.match(req,{ignoreSearch:true});if(kept)return kept;
+  const old=await kept(name,req);if(old)return old;
   const r=await fetch(req);
   if(limit){   // 그림: 정상 응답이고 1MiB 이하일 때만 둔다
-    if(r.ok&&(await r.clone().blob()).size<=MAX_ONE_IMAGE){await c.put(req,r.clone());await trim(c);}
-  }else if(r.ok||r.type==='opaque')await c.put(req,r.clone());   // 일꾼이 불러오는 파이썬 시작 파일은 내용을 볼 수 없는 응답으로 오지만 그대로 둘 수 있다
+    let size=Infinity;if(r.ok)try{size=(await r.clone().blob()).size;}catch(_){}
+    if(size<=MAX_ONE_IMAGE)await keep(name,req,r.clone(),true);
+  }else if(r.ok||r.type==='opaque')await keep(name,req,r.clone(),false);   // 일꾼이 불러오는 파이썬 시작 파일은 내용을 볼 수 없는 응답으로 오지만 그대로 둘 수 있다
   return r;
 }
 async function firstFresh(req){
-  const c=await caches.open(SHELL);
-  try{const r=await fetch(req,{cache:'no-cache'});if(r.ok)await c.put(req,r.clone());return r;}
-  catch(err){const kept=await c.match(req,{ignoreSearch:true});if(kept)return kept;throw err;}
+  let r;
+  try{r=await fetch(req,{cache:'no-cache'});}
+  catch(err){const old=await kept(SHELL,req);if(old)return old;throw err;}   // 인터넷이 안 될 때만 둔 것을 쓴다
+  if(r.ok)await keep(SHELL,req,r.clone(),false);
+  return r;
 }
 self.addEventListener('fetch',e=>{
   const req=e.request;if(req.method!=='GET')return;

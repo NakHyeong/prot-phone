@@ -1,0 +1,9 @@
+{
+  "name": "방패용사 모험담",
+  "short_name": "방패용사",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#15231f",
+  "theme_color": "#15231f",
+  "lang": "ko"
+}

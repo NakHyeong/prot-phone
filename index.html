@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#15231f">
+<title>방패용사 모험담 휴대폰판</title>
+<link rel="manifest" href="manifest.json">
+<style>
+  /* 휴대폰 판 껍데기: 코덱스 화면을 안쪽 틀에 띄우고, 엔진 일꾼과 이어 준다 */
+  :root{--bg:#15231f;--ink:#f3ead6;--soft:#b9c7bd;--gold:#d9b25f}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,"Apple SD Gothic Neo","Malgun Gothic",sans-serif}
+  #game{position:fixed;inset:0;width:100%;height:100%;border:0;background:var(--bg)}
+  #cover{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px 16px;text-align:center;background:var(--bg);z-index:2}
+  #cover b{font-size:42px;color:var(--gold)}
+  #cover h1{margin:0;font-size:20px}
+  #cover p{margin:0;color:var(--soft);font-size:15px;line-height:1.6;max-width:30em}
+  #cover .bar{width:min(280px,80vw);height:6px;border-radius:3px;background:#2b3d37;overflow:hidden}
+  #cover .bar i{display:block;height:100%;width:30%;background:var(--gold);animation:slide 1.4s ease-in-out infinite}
+  @keyframes slide{0%{margin-left:-30%}100%{margin-left:100%}}
+  #busy{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);padding:8px 14px;border-radius:18px;background:#000c;color:var(--ink);font-size:14px;z-index:3;display:none}
+  #cover.fail .bar{display:none}
+  #cover button{font:inherit;padding:10px 18px;border-radius:10px;border:1px solid var(--gold);background:transparent;color:var(--ink)}
+</style>
+</head>
+<body>
+<div id="cover"><b>♜</b><h1>방패용사 모험담</h1><p id="cover-text">게임을 준비하는 중입니다</p><div class="bar"><i></i></div><p id="cover-note">처음 한 번은 인터넷으로 약 20MB를 받습니다. 그다음부터는 인터넷 없이도 열립니다.<br>세계와 내 삶은 이 휴대폰 안에만 저장됩니다.</p></div>
+<iframe id="game" title="방패용사 모험담"></iframe>
+<div id="busy" role="status" aria-live="polite">세계가 흐르는 중입니다…</div>
+<script>
+(()=>{
+  const worker=new Worker('worker.js');const waiting=new Map();let next=1,current='/play';
+  const cover=document.getElementById('cover'),coverText=document.getElementById('cover-text'),busy=document.getElementById('busy'),frame=document.getElementById('game');
+  const ASSETS=new URL('assets/',location.href).href;
+  // 휴대폰 판에 없는 화면(관리자·세계와 혈육)은 연대기로 보낸다
+  const PAGES={'/':'/chronicle','/admin':'/chronicle','/admin/':'/chronicle','/index.html':'/chronicle'};
+
+  worker.onmessage=e=>{
+    const m=e.data;
+    if(m.type==='reply'){const w=waiting.get(m.id);waiting.delete(m.id);if(w)w(m);return;}
+    if(m.type==='progress'){coverText.textContent=m.text;return;}
+    if(m.type==='ready'){go(current);return;}
+    if(m.type==='busy'){busy.style.display='block';return;}
+    if(m.type==='idle'){busy.style.display='none';return;}
+    if(m.type==='fail'){cover.classList.add('fail');cover.style.display='flex';coverText.textContent='게임을 열지 못했습니다: '+m.text;
+      const b=document.createElement('button');b.textContent='다시 열기';b.onclick=()=>location.reload();cover.append(b);}
+  };
+  function ask(method,path,body){return new Promise(ok=>{const id=next++;waiting.set(id,ok);worker.postMessage({id,method,path,body});});}
+
+  // 안쪽 화면의 fetch는 모두 이 함수로 온다: 인터넷이 아니라 휴대폰 안 엔진이 답한다
+  window.protFetch=async(url,opts={})=>{
+    const u=new URL(url,'http://prot.local/');const method=(opts.method||'GET').toUpperCase();
+    const r=await ask(method,u.pathname+u.search,typeof opts.body==='string'?opts.body:'');
+    return new Response(r.text,{status:r.status,headers:{'Content-Type':r.kind}});
+  };
+
+  async function text(path){const r=await ask('GET',path);if(r.status!==200)throw new Error(path+' '+r.status);return r.text;}
+  const fixAssets=s=>s.replace(/(["'(])\/assets\//g,'$1'+ASSETS);
+
+  // 화면 이동: 서버가 주던 HTML을 엔진에서 받아, 붙은 css·js를 안에 넣고, 휴대폰에 맞게 몇 군데를 바꾼다
+  window.protGo=async(href)=>{
+    const u=new URL(href,'http://prot.local/');const path=PAGES[u.pathname]||u.pathname;
+    if(path===current&&frame.contentWindow&&frame.srcdoc){frame.contentWindow.location.hash=u.hash;if(!u.hash)frame.contentWindow.scrollTo(0,0);return;}
+    current=path;await go(path,u.hash);
+  };
+  async function go(path,hash=''){
+    const doc=new DOMParser().parseFromString(await text(path),'text/html');
+    for(const a of doc.querySelectorAll('a[href]')){const h=a.getAttribute('href');if(PAGES[h])a.remove();}   // 없는 화면으로 가는 메뉴는 숨긴다
+    for(const l of doc.querySelectorAll('link[rel="stylesheet"][href^="/"]')){const s=doc.createElement('style');s.textContent=fixAssets(await text(l.getAttribute('href')));l.replaceWith(s);}
+    for(const sc of doc.querySelectorAll('script[src^="/"]')){
+      let js=fixAssets(await text(sc.getAttribute('src')));
+      js=js.replace(/location\.href=(['"])\/\1/g,"parent.protGo('/')");   // '세계 보기' 단추
+      const s=doc.createElement('script');s.textContent=js;sc.remove();doc.body.append(s);   // 미뤄 실행하던 것도 본문 끝에서 실행하면 같다
+    }
+    const glue=doc.createElement('script');
+    glue.textContent=`window.fetch=(u,o)=>parent.protFetch(String(u),o||{});${hash?`location.hash=${JSON.stringify(hash)};`:''}
+document.addEventListener('click',e=>{const a=e.target.closest&&e.target.closest('a[href]');if(!a)return;const h=a.getAttribute('href');if(h&&h.startsWith('/')){e.preventDefault();parent.protGo(h);}},true);`;
+    doc.head.prepend(glue);
+    frame.srcdoc='<!doctype html>'+doc.documentElement.outerHTML;
+    frame.onload=()=>{cover.style.display='none';};
+  }
+
+  if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});   // 인터넷 없이 다시 열 수 있게 파일을 휴대폰에 둔다
+})();
+</script>
+</body>
+</html>

@@ -27,11 +27,12 @@
 <div id="cover"><b>♜</b><h1>방패용사 모험담</h1><p id="cover-text">게임을 준비하는 중입니다</p><div class="bar"><i></i></div><p id="cover-note">처음 한 번은 인터넷으로 약 20MB를 받습니다. 그다음부터는 인터넷 없이도 열립니다.<br>세계와 내 삶은 이 휴대폰 안에만 저장됩니다.</p></div>
 <iframe id="game" title="방패용사 모험담"></iframe>
 <div id="busy" role="status" aria-live="polite">세계가 흐르는 중입니다…</div>
+<script src="route.js"></script>
 <script>
 (()=>{
   const worker=new Worker('worker.js');const waiting=new Map();let next=1,current='/play';
   const cover=document.getElementById('cover'),coverText=document.getElementById('cover-text'),busy=document.getElementById('busy'),frame=document.getElementById('game');
-  const ASSETS=new URL('assets/',location.href).href;
+  const ASSETS=new URL('assets/',location.href).href,BASE=location.href;
   // 휴대폰 판에 없는 화면(관리자·세계와 혈육)은 연대기로 보낸다
   const PAGES={'/':'/chronicle','/admin':'/chronicle','/admin/':'/chronicle','/index.html':'/chronicle'};
 
@@ -47,9 +48,17 @@
   };
   function ask(method,path,body){return new Promise(ok=>{const id=next++;waiting.set(id,ok);worker.postMessage({id,method,path,body});});}
 
-  // 안쪽 화면의 fetch는 모두 이 함수로 온다: 인터넷이 아니라 휴대폰 안 엔진이 답한다
+  // 안쪽 화면이 그림 주소를 풀 때 쓴다: "/assets/이름" → 이 휴대폰 판이 올라간 곳 아래의 진짜 주소
+  window.protAssetURL=path=>ProtRoute.assetURL(path,BASE);
+
+  // 안쪽 화면의 fetch는 모두 이 함수로 온다.
+  // 배경 목록과 해시 이름 그림만 진짜 네트워크로 가고, 나머지(게임 상태)는 휴대폰 안 엔진이 답한다
   window.protFetch=async(url,opts={})=>{
-    const u=new URL(url,'http://prot.local/');const method=(opts.method||'GET').toUpperCase();
+    url=String(url);const method=(opts.method||'GET').toUpperCase();
+    if(method==='GET'&&ProtRoute.isResolved(url,BASE))return fetch(url,{cache:opts.cache||'default',signal:opts.signal});
+    const u=new URL(url,'http://prot.local/');
+    if(u.origin!=='http://prot.local')throw new TypeError('휴대폰 판은 바깥 주소를 받지 않습니다: '+url);
+    if(method==='GET'&&!u.search&&ProtRoute.isStatic(u.pathname))return fetch(ProtRoute.assetURL(u.pathname,BASE),{cache:opts.cache||'default',signal:opts.signal});
     const r=await ask(method,u.pathname+u.search,typeof opts.body==='string'?opts.body:'');
     return new Response(r.text,{status:r.status,headers:{'Content-Type':r.kind}});
   };
@@ -73,7 +82,7 @@
       const s=doc.createElement('script');s.textContent=js;sc.remove();doc.body.append(s);   // 미뤄 실행하던 것도 본문 끝에서 실행하면 같다
     }
     const glue=doc.createElement('script');
-    glue.textContent=`window.fetch=(u,o)=>parent.protFetch(String(u),o||{});${hash?`location.hash=${JSON.stringify(hash)};`:''}
+    glue.textContent=`window.fetch=(u,o)=>parent.protFetch(String(u),o||{});window.protAssetURL=p=>parent.protAssetURL(p);${hash?`location.hash=${JSON.stringify(hash)};`:''}
 document.addEventListener('click',e=>{const a=e.target.closest&&e.target.closest('a[href]');if(!a)return;const h=a.getAttribute('href');if(h&&h.startsWith('/')){e.preventDefault();parent.protGo(h);}},true);`;
     doc.head.prepend(glue);
     frame.srcdoc='<!doctype html>'+doc.documentElement.outerHTML;
